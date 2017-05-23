@@ -139,6 +139,7 @@ elif [ $task == "time" ]; then
     paddle train --job=$task \
     --config=$config \
     --use_gpu=False \
+    --trainer_count=1 \
     --rnn_use_batch=False \
     --feed_data=False \
     --log_period=1 \

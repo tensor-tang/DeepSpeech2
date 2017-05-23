@@ -1,0 +1,54 @@
+digraph DS2 {
+size = "12, 32"
+
+//data format
+data [label="Data\n paddle format\n (bs,seq;c,h,w)"]
+reorder1[shape=box, label="Reorder1\n only reorder data buffer"]
+view1[shape=box, label="View1\n to nonSeq as NCHW"];
+conv1 [shape=box, label="CONV1+BN+ClippedReLU\n (kh=5,kw=20,oc=32,sh=2,sw=2)(relu:20)"];
+conv2 [shape=box, label="CONV2+BN+ClippedReLU\n (kh=5,kw=10,oc=32,sh=1,sw=2)(relu:20)"];
+reorder2[shape=box, label="Reorder2\n only reorder data buffer"]
+view2[shape=box, label="View2\n to mklSeq (seq,bs;c,h,w)"];
+bd1[shape=box, label="BiDirection_RNN\n (dim_out=1760)", fillcolor="#ABACBA", style=filled]
+bd2_7[shape=box, label="BiDirection_RNN\n (dim_out=1760)", fillcolor="#ABACBA", style=filled]
+reorder3[shape=box, label="Reorder3\n only reorder data buffer"]
+view3[shape=box, label="View3\n to paddleSeq (bs,seq;c,h,w)"];
+fc[shape=box, label="FC"]
+WarpCTC[shape=box]
+
+
+// DS2
+data -> reorder1 [label=" (bs, utt; 1, 1, 161)"]
+reorder1 -> view1 [label=" (bs, 161, utt)"];
+view1 -> conv1 [label=" (bs; 1, 161, utt)"]
+conv1 -> conv2 [label=" (bs; 32, 79, utt2)"];
+// utt2 = int(utt/2)-9
+// seq = int(utt2/2)-4
+conv2 -> reorder2 [label=" (bs; 32, 75, seq)"];
+reorder2 -> view2 [label=" (seq, bs, 2400)"];
+view2 -> bd1 [label=" (seq, bs; 2400)"];
+bd1-> bd2_7 [label=" (seq, bs; 1760)"];
+bd2_7 -> fc [label=" (seq, bs; 1760)"];
+fc -> reorder3 [label=" (seq, bs; 29)"]
+reorder3 ->view3 [label=" (bs, seq, 29)"]
+view3 -> WarpCTC [label=" (bs, seq; 29)"];
+
+
+//BD
+bd_fc[shape=box, label="FC no bias\n (dim_in, dim_out)"]
+bd_bn[shape=box, label="BatchNorm with mklSeq", fillcolor=".05 1.0 1.0", style=filled]
+rnn1[shape=box, label="RNN+ReLU\n (Clipped 20)"]
+rnn2[shape=box, label="Reversed RNN+ReLU\n (Clipped 20)"]
+sum[shape=box]
+
+
+bd_in-> bd_fc [label=" (seq, bs; dim_in)"];
+bd_fc -> bd_bn [label=" (seq, bs; dim_out)"];
+bd_bn -> rnn1 [label=" (seq, bs; dim_out)"];
+bd_bn -> rnn2 [label=" (seq, bs; dim_out)"];
+rnn1 -> sum [label=" (seq, bs; dim_out)"];
+rnn2 -> sum [label=" (seq, bs; dim_out)"];
+sum -> bd_out [label=" (seq, bs; dim_out)"];
+
+}
+

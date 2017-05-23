@@ -1,5 +1,8 @@
 digraph DS2 {
 size = "12, 32"
+
+//data format
+data [label="data format\n (batchsize, seq_len, channel, height, width)"]
 view1[shape=box, label="VIEW1 \n seq to none"];
 trans1[shape=box, label="Transpose1 image"]
 conv1 [shape=box, label="CONV1+BN+ClippedReLU\n (kh=5,kw=20,oc=32,sh=sw=2)(relu:20)"];
@@ -12,9 +15,8 @@ bd2_7[shape=box, label="BD x 6 \n(dim_in=1760, dim_out=1760)"]
 FC[shape=box, label="Bottle and FC"]
 CTC[shape=box]
 
-//data format
-datafmt [label="data format\n (batchsize, seq_len, channel, height, width)"]
 
+// DS2
 data -> view1 [label=" (bs, utt, 1, 1, 161)"];
 view1 -> trans1 [label=" (bs, 1, 1, utt, 161)"]
 trans1 -> conv1 [label=" (bs, 1, 1, 161, utt)"]

@@ -46,66 +46,112 @@ settings(
 )
 
 ####################### Deep Speech 2 Configuration #############
-def conv_bn_relu(input, kh, kw, sh, sw, ic, oc = 32, clipped = 20):
-    tmp = img_conv_layer(
+### TODO:
+###     1. change all relu to clipped relu
+###     2. rnn
+
+
+def mkldnn_CBR(input, kh, kw, sh, sw, ic, oc, clipped = 20):
+    tmp = mkldnn_conv(
         input = input,
-        num_filters = oc,
         num_channels = ic,
-        filter_size_y = kh,
-        filter_size = kw,
-        stride_y = sh,
-        stride = sw
+        num_filters = oc,
+        filter_size = [kw, kh],
+        stride = [sw, sh],
+        act = LinearActivation()
     )
-    return batch_norm_layer(input = tmp, act = BReluActivation()) # TODO: change clipped 24 -> 20
+    return mkldnn_bn(
+        input = tmp,
+        num_channels = oc,
+        act = MkldnnReluActivation())
 
-def bdrnn(input, dim_out):
-    tmp = fc_layer(input=input, size=dim_out, bias_attr=False, act=LinearActivation()) #act=None
-    tmp = batch_norm_layer(input = tmp, num_channels = dim_out, act = None)
-    rnn = recurrent_layer(input=tmp, act=BReluActivation()) # TODO: change clipped 24 -> 20
-    rnn_inv = recurrent_layer(input=tmp, act=BReluActivation(), reverse=True)
-    return addto_layer(input = [rnn, rnn_inv])
+def BiDRNN(input, dim_out, dim_in=None):
+    if dim_in is None:
+        dim_in = dim_out
+    tmp = mkldnn_fc(input=input, dim_in=dim_in, dim_out=dim_out,
+                    bias_attr=False, act=LinearActivation()) # maybe act=None
+    tmp = mkldnn_bn(input = tmp, isSeq=True, num_channels = dim_out, act = None)
+    return mkldnn_rnn(
+            input=tmp,
+            input_mode=MkldnnRnnConfig.SKIP_INPUT,
+            alg_kind = MkldnnRnnConfig.RNN_RELU,  # try to use clipped
+            use_bi_direction = True,
+            sum_output = True,
+            layer_num=1)
 
-######## DS2
+
+######## DS2 model ########
 tmp = data_layer(name = 'data', size = dataSpec['freqBins'])
 
-# change to non-seq and transpose
-tmp = view_layer(input=tmp,
+tmp = mkldnn_reorder(input = tmp,
+                format_from='nchw',
+                format_to='nhwc',
+                dims_from=[-1, -1, 1, dataSpec['freqBins']],
+                bs_index=0)
+
+tmp = mkldnn_reshape(input=tmp,
                 name="view_to_noseq",
-                view_type=ViewType.SEQUENCE_TO_NONE,
-                width = dataSpec['freqBins'],
-                height = 100) # TODO:-1
-tmp = img_trans_layer(input = tmp, height = dataSpec['freqBins']) #the height after trans
+                reshape_type=ReshapeType.TO_NON_SEQUENCE,
+                img_dims=[1, dataSpec['freqBins'], -1])
 
-# conv
-tmp = conv_bn_relu(tmp, 5, 20, 2, 2, 1, 32)
-tmp = conv_bn_relu(tmp, 5, 10, 1, 2, 32, 32)
 
-# reshape and transpose
-tmp = view_layer(input=tmp,
-                name="reshape",
-                view_type=ViewType.NO_CHANGE,
-                channel = 1,
-                height = 2400,
-                width = 16) # TODO:-1
-tmp = img_trans_layer(input = tmp, width = 2400) # the width after transpose
-tmp = view_layer(input=tmp,
-                name="view_to_seq",
-                view_type=ViewType.NONE_TO_SEQUENCE,
-                seq_len = -1,
-                channel = 2400,
-                height = 1,
-                width = 1)
+# conv, bn, relu
+tmp = mkldnn_CBR(tmp, 5, 20, 2, 2, 1, 32)
+tmp = mkldnn_CBR(tmp, 5, 10, 1, 2, 32, 32)
 
-tmp = bdrnn(tmp, 1760) # at least one
+# (bs, 32, 75, seq) to (seq,bs,2400)
+tmp = mkldnn_reorder(
+                input = tmp,
+                format_from='nhwc',
+                format_to='chwn',
+                dims_from=[1, -1, 2400, -1],
+                bs_index=1)
 
+tmp = mkldnn_reshape(input=tmp,
+                name="view_to_mklseq",
+                reshape_type=ReshapeType.TO_MKL_SEQUENCE,
+                img_dims=[2400, 1, 1],
+                seq_len=-1)
+
+tmp = BiDRNN(tmp, 1760, 2400)
 for i in xrange(layer_num):
-    tmp = bdrnn(tmp, 1760)
+    tmp = BiDRNN(tmp, 1760)
 
-output = fc_layer(input=tmp, size=num_classes + 1, act=LinearActivation()) #act=None
+# since ctc should +1 of the dim
+ctc_dim = num_classes + 1
+
+tmp = mkldnn_fc(input=tmp,
+                dim_in = 1760,
+                dim_out = ctc_dim,
+                act=LinearActivation()) #act=None
+
+# (seq, bs, dim) to (bs, dim, seq)
+tmp = mkldnn_reorder(
+                input = tmp,
+                format_from='chwn',
+                format_to='nhwc',
+                dims_from=[-1, -1, ctc_dim, 1],
+                bs_index=1)
+
+# (bs, dim, seq) to (bs, seq, dim)
+tmp = mkldnn_reorder(
+                input = tmp,
+                format_from='nchw',
+                format_to='nhwc',
+                dims_from=[-1, ctc_dim, -1, 1],
+                bs_index=0)
+
+output = mkldnn_reshape(input=tmp,
+                name="view_to_paddle_seq",
+                reshape_type=ReshapeType.TO_PADDLE_SEQUENCE,
+                img_dims=[ctc_dim, 1, 1],
+                seq_len=-1)
 
 if not is_predict:
     lbl = data_layer(name='label', size=num_classes)
-    cost = warp_ctc_layer(input=output, name = "WarpCTC", blank = 0, label=lbl, size = num_classes + 1) # CTC size should +1
+    cost = warp_ctc_layer(input=output, name = "WarpCTC", blank = 0, label=lbl, size = ctc_dim) # CTC size should +1
+# use ctc so we can use multi threads
+#    cost = ctc_layer(input=output, name = "CTC", label=lbl, size = num_classes + 1) # CTC size should +1
     outputs(cost)
 else:
     outputs(output)
