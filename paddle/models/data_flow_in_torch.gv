@@ -1,0 +1,44 @@
+digraph DS2 {
+size = "8, 24"
+conv1 [shape=box, label="CONV1+BN+ClippedReLU\n (kh=5,kw=20,oc=32,sh=sw=2)(relu:20)"];
+conv2 [shape=box, label="CONV2+BN+ClippedReLU\n (kh=5,kw=10,oc=32,sh=1,sw=2)(relu:20)"];
+view[shape=box, label="VIEW"];
+trans[shape=box, label="Transpose \n {2, 3}, {1, 2}"]
+bd1[shape=box, label="BD1 \n (dim_in=2400, dim_out=1760)"]
+bd2_7[shape=box, label="BD x 6 \n(dim_in=1760, dim_out=1760)"]
+FC[shape=box, label="Bottle and FC"]
+CTC[shape=box]
+
+data -> conv1 [label=" (bs, 1, 161, utt)"];
+conv1 -> conv2 [label=" (bs, 32, 79, utt/2-9)"];
+// seq_len = int(utt/4-9.5)+1
+conv2 -> view [label="(bs, 32, 75, seq_len)"];
+view -> trans [label="(bs, 2400, seq_len)"];
+trans -> bd1 [label="(seq_len, bs, 2400)"];
+bd1-> bd2_7 [label="(seq_len, bs, 1760)"];
+bd2_7 -> FC [label="(seq_len, bs, 1760)"];
+FC -> CTC [label="(seq_len, bs, 29)"];
+
+
+//BD
+bd_view_in[shape=box, label="VIEW"]
+bd_fc[shape=box, label="FC no bias\n (dim_in, dim_out)"]
+bd_bn[shape=box, label="BatchNorm"]
+bd_view_out[shape=box, label="VIEW"]
+rnn1[shape=box, label="RNN+ReLU\n (Clipped 20)"]
+rnn2[shape=box, label="RNN_reverse+ReLU\n (Clipped 20)"]
+sum[shape=box]
+
+
+bd_in-> bd_view_in [label="(seq_len, bs, dim_in)"];
+bd_view_in -> bd_fc [label="(seq_len * bs, dim_in)"];
+bd_fc -> bd_bn [label="(seq_len * bs, dim_out)"];
+bd_bn -> bd_view_out [label="(seq_len * bs, dim_out)"];
+bd_view_out -> rnn1 [label="(seq_len, bs, dim_out)"];
+bd_view_out -> rnn2 [label="(seq_len, bs, dim_out)"];
+rnn1 -> sum [label="(seq_len, bs, dim_out)"];
+rnn2 -> sum [label="(seq_len, bs, dim_out)"];
+sum -> bd_out [label="(seq_len, bs, dim_out)"];
+
+}
+

@@ -1,0 +1,53 @@
+digraph DS2 {
+size = "12, 32"
+view1[shape=box, label="VIEW1 \n seq to none"];
+trans1[shape=box, label="Transpose1 image"]
+conv1 [shape=box, label="CONV1+BN+ClippedReLU\n (kh=5,kw=20,oc=32,sh=sw=2)(relu:20)"];
+conv2 [shape=box, label="CONV2+BN+ClippedReLU\n (kh=5,kw=10,oc=32,sh=1,sw=2)(relu:20)"];
+view2[shape=box, label="VIEW2 reshape"];
+trans2[shape=box, label="Transpose2 image"]
+view3[shape=box, label="VIEW3 \n none to seq"];
+bd1[shape=box, label="BD1 \n (dim_in=2400, dim_out=1760)"]
+bd2_7[shape=box, label="BD x 6 \n(dim_in=1760, dim_out=1760)"]
+FC[shape=box, label="Bottle and FC"]
+CTC[shape=box]
+
+//data format
+datafmt [label="data format\n (batchsize, seq_len, channel, height, width)"]
+
+data -> view1 [label=" (bs, utt, 1, 1, 161)"];
+view1 -> trans1 [label=" (bs, 1, 1, utt, 161)"]
+trans1 -> conv1 [label=" (bs, 1, 1, 161, utt)"]
+conv1 -> conv2 [label=" (bs, 1, 32, 79, utt/2-9)"];
+// seq_len = int(utt/4-9.5)+1
+conv2 -> view2 [label=" (bs, 1, 32, 75, seq_len)"];
+view2 -> trans2 [label=" (bs, 1, 1, 2400, seq_len)"];
+trans2 -> view3 [label=" (bs, 1, 1, seq_len, 2400)"];
+view3 -> bd1 [label=" (bs, seq_len, 2400, 1, 1)"];
+bd1-> bd2_7 [label=" (bs, seq_len, 1760, 1, 1)"];
+bd2_7 -> FC [label=" (bs, seq_len, 1760, 1, 1)"];
+FC -> CTC [label=" (bs, seq_len, 29, 1, 1)"];
+
+
+//BD
+bd_view_in[shape=box, label="Treat as"]
+bd_fc[shape=box, label="FC no bias\n (dim_in, dim_out)"]
+bd_bn[shape=box, label="BatchNorm"]
+bd_view_out[shape=box, label="Treat as"]
+rnn1[shape=box, label="RNN+ReLU\n (Clipped 20)"]
+rnn2[shape=box, label="RNN_reverse+ReLU\n (Clipped 20)"]
+sum[shape=box]
+
+
+bd_in-> bd_view_in [label="(bs, seq_len, dim_in, 1, 1)"];
+bd_view_in -> bd_fc [label=" treate as (bs * seq_len, 1, dim_in, 1, 1)"];
+bd_fc -> bd_bn [label=" treate as (bs * seq_len, 1, dim_out, 1, 1)"];
+bd_bn -> bd_view_out [label=" treate as (bs * seq_len, 1, dim_out, 1, 1)"];
+bd_view_out -> rnn1 [label="(bs, seq_len, dim_out, 1, 1)"];
+bd_view_out -> rnn2 [label="(bs, seq_len, dim_out, 1, 1)"];
+rnn1 -> sum [label="(bs, seq_len, dim_out, 1, 1)"];
+rnn2 -> sum [label="(bs, seq_len, dim_out, 1, 1)"];
+sum -> bd_out [label="(bs, seq_len, dim_out, 1, 1)"];
+
+}
+
