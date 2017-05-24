@@ -38,7 +38,7 @@ def bn(n,
 
   
 conv(0)
-conv(1)
+conv(1, 2)
 conv(0, name="bbbb")
 conv(1, name="bbbb")
 bn(0)

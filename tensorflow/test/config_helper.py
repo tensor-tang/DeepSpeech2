@@ -23,6 +23,12 @@ from __future__ import print_function
 
 import functools
 import inspect
+import logging
+
+logging.basicConfig(
+    format='[%(levelname)s %(asctime)s %(filename)s:%(lineno)s] %(message)s', )
+logger = logging.getLogger('ds2')
+logger.setLevel(logging.INFO)
 
 class DefaultNameFactory(object):
   def __init__(self, name_prefix):
@@ -59,15 +65,17 @@ def default_name(name_prefix=None):
   def __impl__(func):
     @functools.wraps(func)
     def __wrapper__(*args, **kwargs):
-      key = 'name'
-      # check if have invalid input
-      if len(args) != 0:
-        argspec = inspect.getargspec(func)
+      def check_args():
+        if len(args) != 0:
+          argspec = inspect.getargspec(func)
+        print(argspec)
         num_positional = len(argspec.args)
         if argspec.defaults:
           num_positional -= len(argspec.defaults)
         if not argspec.varargs and len(args) > num_positional:
-          logger.fatal("Must use keyword arguments for non-positional args")
+          logger.warning("Must use keyword arguments for non-positional args")
+      key = 'name'
+      check_args()
       if key not in kwargs or kwargs[key] is None:
         kwargs[key] = name_factory(func)
       return func(*args, **kwargs)
