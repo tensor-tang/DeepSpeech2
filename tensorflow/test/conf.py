@@ -32,6 +32,7 @@ LOG_DIR = "./logs"
 LD_LIBRARY_PATH = "/usr/lib64:/usr/local/lib:/usr/local/cuda/lib64"
 
 DEBUG = True
+
 '''
 network configuration
 '''
@@ -45,6 +46,12 @@ USE_DUMMY = True
 
 # max iterations
 MAX_ITER = 1000
+
+# every 15 iteration test accuracy
+TEST_INTERVAL = 15
+
+# every 10 iteration print the loss
+LOSS_ITER = 10
 
 # learning rate
 LEARNING_RATE = 0.001

@@ -7,20 +7,15 @@ echo ${cur_dir}
 log_dir="${cur_dir}/logs"
 echo ${log_dir}
 
-python trainer.py
-exit 0
+python trainer.py --max_iter=100 --log_dir=$log_dir
 
-echo "----- test config helper -----"
-python unit_test.py
-exit 0
-
-python tb.py  -m 200 --log_dir=$log_dir
 tensorboard --logdir=$log_dir
 exit 0
 
 
-
-clear
+echo "----- test config helper -----"
+python unit_test.py
+exit 0
 
 
 
