@@ -4,6 +4,11 @@ cur_dir=$(cd "$(dirname $0)";pwd -P)
 echo ${cur_dir}
 log_dir="${cur_dir}/logs"
 echo ${log_dir}
+
+echo "----- test config helper -----"
+python unit_test.py
+exit 0
+
 python tb.py  -m 200 --log_dir=$log_dir
 tensorboard --logdir=$log_dir
 exit 0
