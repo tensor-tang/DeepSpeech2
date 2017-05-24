@@ -1,9 +1,14 @@
 #!/bin/bash
 
+clear
+
 cur_dir=$(cd "$(dirname $0)";pwd -P)
 echo ${cur_dir}
 log_dir="${cur_dir}/logs"
 echo ${log_dir}
+
+python trainer.py
+exit 0
 
 echo "----- test config helper -----"
 python unit_test.py

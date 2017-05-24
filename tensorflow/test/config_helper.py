@@ -38,7 +38,7 @@ class DefaultNameFactory(object):
   def __call__(self, func):
     if self.__name_prefix__ is None:
         self.__name_prefix__ = func.__name__
-    name = "__%s_%d__" % (self.__name_prefix__, self.__counter__)
+    name = "%s_%d" % (self.__name_prefix__, self.__counter__)
     self.__counter__ += 1
     return name
 
@@ -68,12 +68,12 @@ def default_name(name_prefix=None):
       def check_args():
         if len(args) != 0:
           argspec = inspect.getargspec(func)
-        print(argspec)
+        #print(argspec)
         num_positional = len(argspec.args)
         if argspec.defaults:
           num_positional -= len(argspec.defaults)
         if not argspec.varargs and len(args) > num_positional:
-          logger.warning("Must use keyword arguments for non-positional args")
+          logger.warning("Should use keyword arguments for non-positional args")
       key = 'name'
       check_args()
       if key not in kwargs or kwargs[key] is None:
