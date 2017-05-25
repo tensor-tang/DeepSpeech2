@@ -23,10 +23,10 @@ from __future__ import print_function
 
 import functools
 import inspect
-import logging
 
+import logging
 logging.basicConfig(
-    format='[%(levelname)s %(asctime)s %(filename)s:%(lineno)s] %(message)s', )
+  format='[%(levelname)s %(asctime)s %(filename)s:%(lineno)s] %(message)s', )
 logger = logging.getLogger('ds2')
 logger.setLevel(logging.INFO)
 

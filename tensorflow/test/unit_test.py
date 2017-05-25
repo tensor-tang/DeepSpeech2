@@ -18,30 +18,47 @@
 """
 
 from config_helper import default_name
+from config_helper import logger
 
 
-## test config helper
-@default_name("abc")
-def conv(n,
-         a=1,
-         b=2,
-         c="xxxxxx",name=None):
-  print(n, a, b, c, name)
-  
-  
-@default_name()
-def bn(n,
-         a=1,
-         b=2,
-         c="xxxxxx",name=None):
-  print(n, a, b, c, name)
+from ds2_dataset import Dataset as dataset
 
-  
-conv(0)
-conv(1, 2)
-conv(0, name="bbbb")
-conv(1, name="bbbb")
-bn(0)
-bn(1)
-bn(0, name="ccc")
-bn(1, name="ccc")
+
+import logging
+logger.setLevel(logging.DEBUG)
+
+y=dataset()
+print (y.next_batch(2))
+
+
+x=dataset(2)
+print(x.next_batch(4))
+
+
+
+def test_default_name():
+  ## test config helper
+  @default_name("abc")
+  def conv(n,
+           a=1,
+           b=2,
+           c="xxxxxx",name=None):
+    print(n, a, b, c, name)
+    
+    
+  @default_name()
+  def bn(n,
+           a=1,
+           b=2,
+           c="xxxxxx",name=None):
+    print(n, a, b, c, name)
+
+    
+  conv(0)
+  conv(1, 2)
+  conv(0, name="bbbb")
+  conv(1, name="bbbb")
+  bn(0)
+  bn(1)
+  bn(0, name="ccc")
+  bn(1, name="ccc")

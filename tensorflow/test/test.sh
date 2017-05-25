@@ -2,6 +2,9 @@
 
 clear
 
+python unit_test.py
+exit 0
+
 cur_dir=$(cd "$(dirname $0)";pwd -P)
 echo ${cur_dir}
 log_dir="${cur_dir}/logs"

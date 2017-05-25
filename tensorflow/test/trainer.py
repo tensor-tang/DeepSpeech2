@@ -31,8 +31,12 @@ from tensorflow.examples.tutorials.mnist import input_data
 
 import tensorflow as tf
 
-# for variable and default names
+
 from config_helper import default_name
+from config_helper import logger
+import logging
+
+from ds2_dataset import Dataset as dataset
 
 # for parse_args
 import conf as CONF
@@ -41,10 +45,7 @@ import os
 ARGS = None
 
 #
-import logging
-logging.basicConfig(
-format='[%(levelname)s %(asctime)s %(filename)s:%(lineno)s] %(message)s', )
-logger = logging.getLogger('ds2')
+
 
 def parse_args():
   parser = argparse.ArgumentParser()
