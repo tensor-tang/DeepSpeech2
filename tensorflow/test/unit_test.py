@@ -23,16 +23,27 @@ from config_helper import logger
 
 from ds2_dataset import Dataset as dataset
 
-
+import numpy as np
 import logging
 logger.setLevel(logging.DEBUG)
 
 y=dataset()
-print (y.next_batch(2))
+dat, lbl_ind, lbl_val, lbl_shape, seq = y.next_batch(2)
+dat=np.asarray(dat)
+lbl_ind=np.asarray(lbl_ind)
+lbl_val=np.asarray(lbl_val)
+seq=np.asarray(seq)
+print (dat.shape, lbl_ind.shape, lbl_val.shape, lbl_shape, seq.shape, "seq lens:", seq)
 
 
 x=dataset(2)
-print(x.next_batch(4))
+dat, lbl_ind, lbl_val, lbl_shape, seq = x.next_batch(4)
+dat=np.asarray(dat)
+lbl_ind=np.asarray(lbl_ind)
+lbl_val=np.asarray(lbl_val)
+seq=np.asarray(seq)
+print (dat.shape, lbl_ind.shape, lbl_val.shape, lbl_shape, seq.shape, "seq lens:", seq)
+
 
 
 
