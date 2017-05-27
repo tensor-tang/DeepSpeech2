@@ -27,16 +27,13 @@ from __future__ import print_function
 
 import sys
 
-from tensorflow.examples.tutorials.mnist import input_data
-
 import tensorflow as tf
-
 
 from config_helper import default_name
 from config_helper import logger
 import logging
 
-from ds2_dataset import Dataset as dataset
+from ds2_dataset import Dataset
 
 # for parse_args
 import conf as CONF
@@ -44,7 +41,7 @@ import argparse
 import os
 ARGS = None
 
-#
+
 
 
 def parse_args():
@@ -219,88 +216,155 @@ def fc_layer(input_tensor, dim_out, dim_in=None, with_bias=True, name=None):
     return fc_
 
 
-      
-def train():
-  img_h = 28
-  img_w = 28
-  num_classes = 10
-  data_format = CONF.DATA_FORMAT
-  assert data_format in ["NCHW", "NHWC"]
+def _nchw(input_data):
+  '''use nchw data format
+    return seq, bs, dim
+  '''
+  # transpose to [bs, 161, seq]
+  trans = tf.transpose(input_data, perm = [0, 2, 1])
+  # to shape: [bs, 1, 161, seq]
+  feat = tf.expand_dims(trans, 1)
+
+  # ic = 1, oc = 32, kh = 5, kw = 20, sh = 2, sw = 2
+  feat = conv_layer(feat, 1, 32, [5, 20], [2, 2], data_format='NCHW')
+
+  # ic = 32, oc = 32, kh = 5, kw = 10, sh = 1, sw = 2
+  feat = conv_layer(feat, 32, 32, [5, 10], [1, 2], data_format='NCHW')
+
+  feat_shape = tf.shape(feat)
   
-  # data
-  with tf.name_scope('input'):
-    input = tf.placeholder(tf.float32, [None, img_h*img_w], name='data')
+  dim = feat_shape[1] * feat_shape[2]
+  seq = feat_shape[3]
+  feat = tf.reshape(feat, [-1, dim, seq])
+  # [bs, dim , seq] to [seq, bs, dim]
+  out = tf.transpose(feat, [2, 0, 1])
+  return out
+  
+def _nhwc(input_data):
+  '''use nhwc data format
+    return seq, bs, dim
+  '''
+  # to shape: [bs, 1, 161, seq]
+  feat = tf.expand_dims(input_data, -1)
 
-    # Define loss and optimizer
-    label = tf.placeholder(tf.float32, [None, num_classes], name='label')
+  # ic = 1, oc = 32, kh = 20, kw = 5, sh = 2, sw = 2
+  feat = conv_layer(feat, 1, 32, [20, 5], [2, 2], data_format='NHWC')
 
-  ic = 1
-  oc = 16
-  kh = 3
-  kw = 3
-  sh = 1
-  sw = 1
+  # ic = 32, oc = 32, kh = 10, kw = 5, sh = 2, sw = 1
+  feat = conv_layer(feat, 32, 32, [10, 5], [2, 1], data_format='NHWC')
 
-  if data_format == "NHWC":
-    img = tf.reshape(input, [-1, img_h, img_w, ic])
+  # [bs, seq, 75, 32] to [seq, bs, 32, 75]
+  feat = tf.transpose(feat, [1, 0, 3, 2])
+  feat_shape = tf.shape(feat)
+
+  seq = feat_shape[0]
+  dim = feat_shape[2] * feat_shape[3]
+  out = tf.reshape(feat, [seq, -1, dim])
+  return out
+  
+def get_logits(input_data, num_classes, data_format):
+  if data_format not in ["NCHW", "NHWC"]:
+    logger.fatal("only support nchw or nhwc yet")
+
+  if data_format == 'NCHW':
+    feat = _nchw(input_data)
   else:
-    img = tf.reshape(input, [-1, ic, img_h, img_w])
+    feat = _nhwc(input_data)
 
-  conv = conv_layer(img, ic, oc, [kh, kw], [sh, sw], data_format=data_format)
+  rnn_out = feat
 
-  conv = conv_layer(conv, oc, oc, [kh, kw], [sh, sw], data_format=data_format)
+  rnn_shape = tf.shape(rnn_out)
+  #rnn_shape = rnn_out.get_shape().as_list()
 
-  out = fc_layer(conv, num_classes, dim_in=24*24*oc)
-
-  with tf.name_scope('cross_entropy'):
-    diff = tf.nn.softmax_cross_entropy_with_logits(labels=label, logits=out)
-    with tf.name_scope('total'):
-      cross_entropy = tf.reduce_mean(diff)
-  DEBUG(tf.summary.scalar('cross_entropy', cross_entropy))
-
-  #optimizer = tf.train.AdamOptimizer(ARGS.learning_rate)
-  with tf.name_scope('train'):
-    train_op = tf.train.AdamOptimizer(ARGS.learning_rate).minimize(cross_entropy)
-
-  with tf.name_scope('accuracy'):
-    with tf.name_scope('correct_prediction'):
-      correct_prediction = tf.equal(tf.argmax(out, 1), tf.argmax(label, 1))
-    with tf.name_scope('accuracy'):
-      accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
-  DEBUG(tf.summary.scalar('accuracy', accuracy))
-
- 
+  seq = rnn_shape[0]
   
-  # Import data
-  mnist = input_data.read_data_sets('/tmp/tensorflow/mnist/input_data', one_hot=True)
+  logits = fc_layer(rnn_out, num_classes, dim_in=32 * 75)
+  logits = tf.reshape(logits, [seq, -1, num_classes])
+  return logits
+
+
+def get_seq_lens(input_utt_lens):
+  '''
+  according to len = floor((size - filter_len) / stride) + 1 
+  '''
+  width = [20, 10]
+  stride = 2
+  seq_lens = input_utt_lens
+  for i in xrange(2):
+    seq_lens = tf.div(seq_lens, stride)
+    seq_lens = tf.subtract(seq_lens, int(width[i]/2 - 1))
+  #seq_lens = tf.Print(seq_lens, [seq_lens], "Conved seq len: ")
+  return seq_lens
+
+def train():
+  num_classes = Dataset.char_num + 1
+  data_format = CONF.DATA_FORMAT
+  
+  # inputs
+  with tf.name_scope('inputs'):
+    # defulat input data shape is [bs, seq, 161]
+    input_data = tf.placeholder(dtype=tf.float32, shape=[None, None, Dataset.freq_bins])
+    input_label_indice = tf.placeholder(dtype=tf.int64, shape=[None, None])
+    input_label_value  = tf.placeholder(dtype=tf.int32, shape=[None])
+    input_label_shape  = tf.placeholder(dtype=tf.int64, shape=[2])
+    input_utt_lens = tf.placeholder(dtype=tf.int32, shape=[None])
+
+  logits = get_logits(input_data, num_classes, data_format)
+
+
+  # Calculate the average ctc loss across the batch.
+  input_label = tf.SparseTensor(indices = input_label_indice,
+                                values = input_label_value,
+                                dense_shape = input_label_shape)
+
+  #seq_len = tf.shape(logits)[0]
+  #bs = tf.shape(logits)[1]
+  #seq = tf.TensorArray(tf.int32, size=bs)
+  #seq.write(0, seq_len)
+  #input_utt_lens.write(0, seq_len)
+  seq_lens = get_seq_lens(input_utt_lens)
+  ctc_loss = tf.nn.ctc_loss(labels=input_label,
+                        inputs = tf.cast(logits, tf.float32),
+                        sequence_length = seq_lens,
+                        preprocess_collapse_repeated = True,
+                        time_major = True)  # use shape [seq, bs, dim]
+
+  loss_op = tf.reduce_mean(ctc_loss, name = 'ctc_loss_mean')
+  DEBUG(tf.summary.scalar('ctc_loss_mean', loss_op))
+
+  with tf.name_scope('train'):
+    optimizer = tf.train.AdamOptimizer(ARGS.learning_rate)
+    train_op = optimizer.minimize(loss_op)
 
   # Create a saver for writing training checkpoints.
   #saver = tf.train.Saver()
 
-  def feed_dict(is_train = True):
-    """Make a TensorFlow feed_dict: maps data onto Tensor placeholders."""
-    if is_train:
-      xs, ys = mnist.train.next_batch(ARGS.batch_size) #, fake_data=ARGS.fake_data)
-    else:
-      xs, ys = mnist.test.images, mnist.test.labels
-    return {input: xs, label: ys}
+  dataset = Dataset(use_dummy=True)
+  def feed_dict():
+    dat, lbl_ind, lbl_val, lbl_shp, utt = dataset.next_batch(ARGS.batch_size)
+    return {input_data: dat,
+            input_label_indice: lbl_ind,
+            input_label_value: lbl_val,
+            input_label_shape: lbl_shp,
+            input_utt_lens: utt}
 
   with tf.Session() as sess:
+    sess.run(tf.global_variables_initializer())
+    run_options = None
+    run_metadata = None
     # Merge all the summaries and write them out to ARGS.log_dir
     if ARGS.debug:
       summary_op = tf.summary.merge_all()
       train_writer = tf.summary.FileWriter(ARGS.log_dir + '/train', sess.graph)
       test_writer = tf.summary.FileWriter(ARGS.log_dir + '/test') #, sess.graph)
-
-    sess.run(tf.global_variables_initializer())
-    for i in range(ARGS.max_iter):
       run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
       run_metadata = tf.RunMetadata()
-      sess.run(train_op, feed_dict=feed_dict(),
+
+    for i in range(ARGS.max_iter):
+      train_loss, _ = sess.run([loss_op, train_op], feed_dict=feed_dict(),
                options=run_options, run_metadata=run_metadata)
       if i % CONF.LOSS_ITER == 0:
-        train_acc = sess.run(accuracy, feed_dict=feed_dict())
-        logger.info('iter %d, training accuracy %g' % (i, train_acc))
+        logger.info('iter %d, training loss %g' % (i, train_loss))
         #summary, train_acc = sess.run([summary_op, train_op],
         #                      feed_dict={input: batch[0], label: batch[1]},
         #                      options=run_options,
@@ -310,13 +374,6 @@ def train():
                              options=run_options, run_metadata=run_metadata)
         DEBUG(train_writer.add_run_metadata(run_metadata, 'iter%03d' % i))
         DEBUG(train_writer.add_summary(summary, i))
-
-      if i % CONF.TEST_INTERVAL == 0:
-        test_acc = sess.run(accuracy, feed_dict=feed_dict(False))
-        logger.info('iter %d, test accuracy %g' % (i, test_acc))
-        if ARGS.debug:
-          summary = sess.run(summary_op, feed_dict=feed_dict(False))
-        DEBUG(test_writer.add_summary(summary, i))
 
     DEBUG(train_writer.close())
     DEBUG(test_writer.close())

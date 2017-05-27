@@ -2,8 +2,8 @@
 
 clear
 
-python unit_test.py
-exit 0
+#python unit_test.py
+#exit 0
 
 cur_dir=$(cd "$(dirname $0)";pwd -P)
 echo ${cur_dir}
@@ -12,7 +12,7 @@ echo ${log_dir}
 
 python trainer.py --max_iter=100 --log_dir=$log_dir
 
-tensorboard --logdir=$log_dir
+#tensorboard --logdir=$log_dir
 exit 0
 
 

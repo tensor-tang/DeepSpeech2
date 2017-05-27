@@ -49,7 +49,7 @@ class Dataset(object):
     self.utt_counts = list()
     for i in xrange(len(self.counts)):
       self.utt_counts.append(self.counts[i] * self.scale_factor)
-    logger.debug(self.utt_counts);
+    # logger.debug(self.utt_counts);
 
     assert len(self.utt_lengths) == len(self.lbl_lengths)
     assert len(self.lbl_lengths) == len(self.counts)
@@ -84,11 +84,11 @@ class Dataset(object):
 
   def get_from_table(self, batch_size):
     """get the datas from randomed table.
-      return the numpy arrays: data, label, seq_len
+      return the numpy arrays: data, label, utt_lens
 
-      data   : shape [bs, seq_len, bins]
-      label  : shape [bs, lbl_len]
-      seq_len: shape [bs]
+      data    : shape [bs, utt_lens, bins]
+      label   : shape [bs, lbl_len]
+      utt_lens: shape [bs]
     """
     assert batch_size > 0
     idx = self.utt_cur_idx
@@ -105,11 +105,11 @@ class Dataset(object):
     lbl = self.lbl_table[lbl_start : lbl_start + lbl_h]
     lbl = lbl.reshape([batch_size, -1])
 
-    logger.debug(lbl.shape)
+    # logger.debug(lbl.shape)
     
-    seq = np.full(batch_size, self.utt_lengths[idx]).astype('int32')
-    # seq = [self.utt_lengths[idx]] * batch_size
-    return dat, lbl, seq
+    utt_lens = np.full(batch_size, self.utt_lengths[idx]).astype('int32')
+    # utt_lens = [self.utt_lengths[idx]] * batch_size
+    return dat, lbl, utt_lens
 
 
   def dense_to_sparse(self, dense):
@@ -117,7 +117,7 @@ class Dataset(object):
       return the list object: indices, values, dense_shape
     
       indices    : 2-D int64 of dense_shape
-      values     : 1-D int32
+      values     : 1-D int32 (can be any in tf.SparseTensor, here choose int32)
       dense_shape: 1-D int64
 
       details ref to tf.SparseTensor
@@ -133,23 +133,23 @@ class Dataset(object):
     ind = np.array(indices, dtype=np.int64).astype('int64').tolist()
     val = np.array(values, dtype=np.int32).astype('int32').tolist()
     shp = np.array(dense.shape, dtype=np.int64).astype('int64').tolist()
-    logger.debug(ind)
-    logger.debug(val)
-    logger.debug(shp)
+    #logger.debug(ind)
+    #logger.debug(val)
+    #logger.debug(shp)
     return ind, val, shp
 
 
   def next_batch(self, batch_size):
     """Return the next `batch_size` examples from the data set.
       return the lists:
-        data, label_indices, label_value, label_shape, seq_len
+        data, label_indices, label_value, label_shape, utt_lens
 
-      data   : shape [bs, seq_len, bins]
-      label  : 
+      data    : shape [bs, utt_lens, bins]
+      label   : 
         indices     : shape [N, dims]
         values      : shape [N]
         dense_shape : shape [2], data: [bs, lbl_len]
-      seq_len: shape [bs]
+      utt_lens: shape [bs]
     """
     if batch_size > self.batch_size:
       self.batch_size = batch_size
@@ -167,10 +167,10 @@ class Dataset(object):
     
     self.remain_cnt -= batch_size
 
-    dat, lbl, seq = self.get_from_table(batch_size)
+    dat, lbl, utt = self.get_from_table(batch_size)
     dat = dat.tolist()
-    seq = seq.tolist()
+    utt = utt.tolist()
     lbl_ind, lbl_val, lbl_shp = self.dense_to_sparse(lbl)
-    return dat, lbl_ind, lbl_val, lbl_shp, seq
+    return dat, lbl_ind, lbl_val, lbl_shp, utt
 
 
