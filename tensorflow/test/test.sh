@@ -10,7 +10,7 @@ cur_dir=$(cd "$(dirname $0)";pwd -P)
 log_dir="${cur_dir}/logs"
 #echo ${log_dir}
 
-python trainer.py --batch_size=32 --max_iter=100 --use_dummy=True --debug=False --data_format="NHWC" --log_dir=$log_dir
+python trainer.py --batch_size=32 --max_iter=100 --use_dummy=True --debug=True --data_format="NHWC" --log_dir=$log_dir
 
 #tensorboard --logdir=$log_dir
 exit 0
