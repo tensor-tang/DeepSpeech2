@@ -6,11 +6,11 @@ clear
 #exit 0
 
 cur_dir=$(cd "$(dirname $0)";pwd -P)
-echo ${cur_dir}
+#echo ${cur_dir}
 log_dir="${cur_dir}/logs"
-echo ${log_dir}
+#echo ${log_dir}
 
-python trainer.py --max_iter=100 --log_dir=$log_dir
+python trainer.py --batch_size=32 --max_iter=100 --use_dummy=True --debug=False --data_format="NHWC" --log_dir=$log_dir
 
 #tensorboard --logdir=$log_dir
 exit 0

@@ -23,12 +23,98 @@ from __future__ import print_function
 
 import functools
 import inspect
+import conf as CONF
 
+# logger
 import logging
 logging.basicConfig(
   format='[%(levelname)s %(asctime)s %(filename)s:%(lineno)s] %(message)s', )
 logger = logging.getLogger('ds2')
 logger.setLevel(logging.INFO)
+
+# for parse_args
+import os
+import argparse
+
+DEBUG = False
+
+
+def parse_args():
+  '''parse arguments
+  return [parsed, unparsed] args
+  '''
+  parser = argparse.ArgumentParser()
+  parser.add_argument(
+    '--batch_size',
+    required=False,
+    type=int,
+    default=CONF.BATCH_SIZE,
+    help='batch size for train and test.')
+  parser.add_argument(
+    '--use_dummy',
+    required=False,
+    type=bool,
+    default=CONF.USE_DUMMY,
+    help='If true, uses dummy(fake) data for unit testing.')
+  parser.add_argument(
+    '-m',
+    '--max_iter',
+    required=False,
+    type=int,
+    default=CONF.MAX_ITER,
+    help='Number of iterations to run trainer.')
+  parser.add_argument(
+    '--learning_rate',
+    type=float,
+    default=CONF.LEARNING_RATE,
+    help='Initial learning rate')
+  parser.add_argument(
+    '--debug',
+    type=bool,
+    default=CONF.DEBUG,
+    help='If true will in debug mode and logging debug')
+  parser.add_argument(
+    '--data_format',
+    type=str,
+    default=CONF.DATA_FORMAT,
+    help='data format only support NCHW or NHWC')
+  parser.add_argument(
+    '--loss_iter_interval',
+    type=int,
+    default=CONF.LOSS_ITER,
+    help='at intervals of how many iterations to print the loss')
+  LOG_DIR = os.path.abspath(CONF.LOG_DIR)
+  parser.add_argument(
+    '--log_dir',
+    type=str,
+    default=LOG_DIR,
+    help='Summaries log directory')
+
+  args, unparsed = parser.parse_known_args()
+
+  args.data_format = args.data_format.upper()
+  # TODO: handle unparsed
+  return args, unparsed
+
+def set_debug_mode(yes):
+  '''
+  set use debug mode or not
+  '''
+  DEBUG = yes
+  if yes:
+    logger.setLevel(logging.DEBUG)
+  else:
+    logger.setLevel(logging.INFO)
+
+def DEBUG(op):
+  '''
+  only operate in debug mode
+  '''
+  if DEBUG:
+    op
+  else:
+    pass
+    
 
 class DefaultNameFactory(object):
   def __init__(self, name_prefix):
