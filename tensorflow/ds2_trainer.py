@@ -25,10 +25,11 @@ from __future__ import division
 from __future__ import print_function
 
 import sys
+import time
 import tensorflow as tf
 import ds2
 
-from ds2_config_helper import logger, parse_args, set_debug_mode
+from ds2_config_helper import logger, parse_args, set_debug_mode, init_variables
 from ds2_config_helper import save_timeline, save_tfprof
 from ds2_dataset       import Dataset
 
@@ -37,7 +38,11 @@ ARGS = None
 
 
 def train_loop():
+  '''ds2 train loop
+  '''
   def feed_dict():
+    '''feed inputs for ds2
+    '''
     dat, lbl_ind, lbl_val, lbl_shp, utt = dataset.next_batch(ARGS.batch_size)
     return {input_data:         dat,
             input_label_indice: lbl_ind,
@@ -63,27 +68,36 @@ def train_loop():
     optimizer = tf.train.AdamOptimizer(ARGS.learning_rate)
     train_op = optimizer.minimize(loss_op)
 
-  # Create a saver for writing training checkpoints.
-  #saver = tf.train.Saver()
-
   dataset = Dataset(use_dummy=ARGS.use_dummy)
 
+  # Create a saver. TODO: how about only inference
+  saver = tf.train.Saver(tf.global_variables())
+
   with tf.Session() as sess:
-    sess.run(tf.global_variables_initializer())
+    last_iter = init_variables(sess, saver, ARGS.checkpoint_dir)
     run_options = None
     run_metadata = None
     # Merge all the summaries and write them out to ARGS.log_dir
     if ARGS.debug:
       summary_op = tf.summary.merge_all()
-      train_writer = tf.summary.FileWriter(ARGS.log_dir + '/train', sess.graph)
+      summary_writer = tf.summary.FileWriter(ARGS.log_dir, sess.graph)
       run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
       run_metadata = tf.RunMetadata()
 
-    #duration = time.time() - start_time
     #assert not np.isnan(loss_value), 'Model diverged with loss = NaN'
     for i in range(ARGS.max_iter):
+      start_time = time.time()
       train_loss, _ = sess.run([loss_op, train_op], feed_dict=feed_dict(),
-               options=run_options, run_metadata=run_metadata)
+                               options=run_options, run_metadata=run_metadata)
+      duration = time.time() - start_time
+
+      # Save the model checkpoint periodically
+      if i % ARGS.checkpoint_iter == 0 or (i + 1) == ARGS.max_iter:
+        checkpoint_path = ARGS.checkpoint_dir + '/ds2_model'
+        global_step = last_iter + i
+        saver.save(sess, checkpoint_path, global_step = global_step)
+        logger.info('save checkpoint to %s-%d' % (ARGS.checkpoint_dir, global_step))
+          
       if i == ARGS.profil_iter:
         # save timeline to a json and only save once 
         filename = ARGS.log_dir + ('/timeline_iter%d' % i) + '.json'
@@ -94,20 +108,21 @@ def train_loop():
         save_tfprof(ARGS.log_dir, sess.graph, run_metadata)
         
       if i % ARGS.loss_iter_interval == 0:
-        logger.info('iter %d, training loss %g' % (i, train_loss))
-        #summary, train_acc = sess.run([summary_op, train_op],
-        #                      feed_dict={input: batch[0], label: batch[1]},
-        #                      options=run_options,
-        #                      run_metadata=run_metadata)
+        format_str = 'iter %d, training loss = %.2f (%.3f sec/batch)'
+        log_content = (i, train_loss, duration)
         if ARGS.debug:
-          # summary
+          s = time.time()
           summary = sess.run(summary_op, feed_dict=feed_dict(),
                              options=run_options, run_metadata=run_metadata)
-          train_writer.add_run_metadata(run_metadata, 'iter%03d' % i)
-          train_writer.add_summary(summary, i)
-      
+          summary_writer.add_run_metadata(run_metadata, 'iter%03d' % i)
+          summary_writer.add_summary(summary, i)
+          d = time.time() - s
+          format_str += ', summary %.3g sec'
+          log_content += (d,)
+        logger.info(format_str % log_content)
+
     if ARGS.debug:
-      train_writer.close()
+      summary_writer.close()
 
 
 def main(_):
@@ -117,6 +132,9 @@ def main(_):
   if tf.gfile.Exists(ARGS.log_dir):
     tf.gfile.DeleteRecursively(ARGS.log_dir)
   tf.gfile.MakeDirs(ARGS.log_dir)
+
+  if not tf.gfile.Exists(ARGS.checkpoint_dir):
+    tf.gfile.MakeDirs(ARGS.checkpoint_dir)
 
   train_loop()
 

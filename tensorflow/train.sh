@@ -14,6 +14,7 @@ python ds2_trainer.py \
     --loss_iter_interval=10 \
     --log_dir=$log_dir \
     --profil_iter=30 \
+    --checkpoint_iter=1000 \
     --debug
 
 #tensorboard --logdir=$log_dir

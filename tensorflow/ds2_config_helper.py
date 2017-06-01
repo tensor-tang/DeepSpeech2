@@ -25,6 +25,8 @@ import functools
 import inspect
 import ds2_conf as CONF
 
+import tensorflow as tf
+
 # timeline and tfprof for profiling
 from tensorflow.python.client import timeline
 from tensorflow.contrib       import tfprof
@@ -84,11 +86,22 @@ def parse_args():
   debug_parser.add_argument('--no_debug', dest='debug', action='store_false',
     help='run in no debug mode and do not logging debug')
   parser.set_defaults(debug=True if CONF.DEBUG else False)
+
   parser.add_argument(
     '--profil_iter',
     type=int,
     default=CONF.PROFIL_ITER,
     help='save profiling data(timeline) at one iteration')
+  parser.add_argument(
+    '--checkpoint_dir',
+    type=str,
+    default=CONF.CHECKPOINT_DIR,
+    help='path to load and save checkpoint')
+  parser.add_argument(
+    '--checkpoint_iter',
+    type=int,
+    default=CONF.CHECKPOINT_ITER,
+    help='at intervals of how many iterations to save checkpoint')
   parser.add_argument(
     '--data_format',
     type=str,
@@ -99,15 +112,16 @@ def parse_args():
     type=int,
     default=CONF.LOSS_ITER,
     help='at intervals of how many iterations to print the loss')
-  LOG_DIR = os.path.abspath(CONF.LOG_DIR)
   parser.add_argument(
     '--log_dir',
     type=str,
-    default=LOG_DIR,
+    default=CONF.LOG_DIR,
     help='Summaries log directory')
 
   args, unparsed = parser.parse_known_args()
 
+  args.log_dir = os.path.abspath(args.log_dir)
+  args.checkpoint_dir = os.path.abspath(args.checkpoint_dir)
   args.data_format = args.data_format.upper()
   # TODO: handle unparsed
   return args, unparsed
@@ -231,3 +245,28 @@ def save_tfprof(prefix_path, graph, run_metadata=None):
   prof_options = analyzer.PRINT_PARAMS_ON_DEVICE
   prof_options['output'] = 'file:outfile=' + prefix_path + "/device.log" 
   analyzer.print_model_analysis(graph, run_meta = run_metadata, tfprof_options = prof_options)
+
+
+def init_variables(sess, saver=None, checkpoint_dir=None):
+  """ Initialize variables of the graph
+  will init from checkpoint if provided
+  return the last iter number
+  """
+  ckpt = tf.train.get_checkpoint_state(checkpoint_dir)
+  assert sess is not None, 'session should not be none, use tf.Session()'
+
+  # logger.debug(ckpt)
+  if ckpt is None or saver is None or ckpt.model_checkpoint_path is None:
+    sess.run(tf.global_variables_initializer())
+    return 0
+
+  if ckpt.model_checkpoint_path:
+    # Restores from checkpoint
+    checkpoint_path = ckpt.model_checkpoint_path
+    saver.restore(sess, checkpoint_path)
+    # Assuming model_checkpoint_path looks something like:
+    #   /my-path/model-1000,
+    # extract last_iter from it.
+    last_iter = checkpoint_path.split('/')[-1].split('-')[-1]
+    logger.info("Init from checkpoint " + checkpoint_path)
+    return int(last_iter)
