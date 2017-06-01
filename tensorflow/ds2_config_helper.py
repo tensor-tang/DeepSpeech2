@@ -25,6 +25,10 @@ import functools
 import inspect
 import ds2_conf as CONF
 
+# timeline and tfprof for profiling
+from tensorflow.python.client import timeline
+from tensorflow.contrib       import tfprof
+
 # logger
 import logging
 logging.basicConfig(
@@ -180,3 +184,50 @@ def default_name(name_prefix=None):
     return __wrapper__
   return __impl__
 
+
+def save_timeline(filename, run_metadata):
+  '''save profiling timeline data with tf.RunMetadata()
+  run_metadata: generate in sess.run()
+  '''
+  if run_metadata is None:
+    logger.warning("run_metadata is none, skip save timeline")
+    pass
+  assert isinstance(filename, str), 'filename should be an string!'
+  with open(filename, 'w') as f:
+    tl = timeline.Timeline(run_metadata.step_stats)
+    ctf = tl.generate_chrome_trace_format()
+    f.write(ctf)
+
+
+def save_tfprof(prefix_path, graph, run_metadata=None):
+  '''save TFprof all files
+  includes: 
+    params.log        - trainable params
+    flops.log         - float_ops
+    timing_memory.log - timeing memory
+    device.log        - params on device
+  if graph is none will get default graph from tf
+  '''
+  # Print trainable variable parameter statistics to stdout
+  if graph is None:
+    logger.warning("input graph is none, use tf.get_default_graph() instead")
+    graph = tf.get_default_graph()
+  assert isinstance(prefix_path, str), 'filename should be an string!'
+
+  analyzer = tfprof.model_analyzer
+
+  prof_options = analyzer.TRAINABLE_VARS_PARAMS_STAT_OPTIONS
+  prof_options['output'] = 'file:outfile=' + prefix_path + "/params.log"
+  analyzer.print_model_analysis(graph, run_meta = run_metadata, tfprof_options = prof_options)
+
+  prof_options = analyzer.FLOAT_OPS_OPTIONS
+  prof_options['output'] = 'file:outfile=' + prefix_path + "/flops.log" 
+  analyzer.print_model_analysis(graph, run_meta = run_metadata, tfprof_options = prof_options)
+
+  prof_options = analyzer.PRINT_ALL_TIMING_MEMORY
+  prof_options['output'] = 'file:outfile=' + prefix_path + "/timing_memory.log"  
+  analyzer.print_model_analysis(graph, run_meta = run_metadata, tfprof_options = prof_options)
+
+  prof_options = analyzer.PRINT_PARAMS_ON_DEVICE
+  prof_options['output'] = 'file:outfile=' + prefix_path + "/device.log" 
+  analyzer.print_model_analysis(graph, run_meta = run_metadata, tfprof_options = prof_options)

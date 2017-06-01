@@ -13,6 +13,7 @@ python ds2_trainer.py \
     --data_format="nhwc" \
     --loss_iter_interval=10 \
     --log_dir=$log_dir \
+    --profil_iter=30 \
     --debug
 
 #tensorboard --logdir=$log_dir

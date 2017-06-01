@@ -26,11 +26,10 @@ from __future__ import print_function
 
 import sys
 import tensorflow as tf
-from tensorflow.python.client import timeline
-from tensorflow.contrib import tfprof
 import ds2
 
 from ds2_config_helper import logger, parse_args, set_debug_mode
+from ds2_config_helper import save_timeline, save_tfprof
 from ds2_dataset       import Dataset
 
 
@@ -85,35 +84,15 @@ def train_loop():
     for i in range(ARGS.max_iter):
       train_loss, _ = sess.run([loss_op, train_op], feed_dict=feed_dict(),
                options=run_options, run_metadata=run_metadata)
-      if i == ARGS.profil_iter and run_metadata is not None:
-        # write timeline to a json and only save once 
-        tl = timeline.Timeline(run_metadata.step_stats)
-        ctf = tl.generate_chrome_trace_format()
-        tl_name = '/timeline_iter%d' % i
-        tl_str = ARGS.log_dir + tl_name + '.json'
-        logger.debug('save timeline to: ' + tl_str)
-        with open(tl_str, 'w') as tl_file:
-          tl_file.write(ctf)
+      if i == ARGS.profil_iter:
+        # save timeline to a json and only save once 
+        filename = ARGS.log_dir + ('/timeline_iter%d' % i) + '.json'
+        logger.debug('save timeline to: ' + filename)
+        save_timeline(filename, run_metadata)
         # tfprof
-        '''
-        prof_options = tfprof.model_analyzer.TRAINABLE_VARS_PARAMS_STAT_OPTIONS
-        prof_options['dump_to_file'] = ARGS.log_dir + "/params.log"
-        param_stats = tfprof.model_analyzer.print_model_analysis(sess.graph, #tf.get_default_graph(),
-                                                                 tfprof_options = prof_options)
-        # sys.stdout.write('total_params: %d\n' % param_stats.total_parameters)
-
-        prof_options = tfprof.model_analyzer.FLOAT_OPS_OPTIONS
-        prof_options['dump_to_file'] = ARGS.log_dir + "/flops.log" 
-        tfprof.model_analyzer.print_model_analysis(sess.graph, #tf.get_default_graph(),
-                                                   run_meta = run_metadata,
-                                                   tfprof_options = prof_options)
-
-        prof_options = tfprof.model_analyzer.PRINT_ALL_TIMING_MEMORY
-        prof_options['dump_to_file'] = ARGS.log_dir + "/timing_memory.log"  
-        tfprof.model_analyzer.print_model_analysis(tf.get_default_graph(),
-                                                  run_meta = run_metadata,
-                                                  tfprof_options = prof_options)
-        '''
+        logger.debug('save TFprof to: ' + ARGS.log_dir)
+        save_tfprof(ARGS.log_dir, sess.graph, run_metadata)
+        
       if i % ARGS.loss_iter_interval == 0:
         logger.info('iter %d, training loss %g' % (i, train_loss))
         #summary, train_acc = sess.run([summary_op, train_op],
