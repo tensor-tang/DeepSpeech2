@@ -137,6 +137,7 @@ def conv_layer(input_tensor,
       DEBUG(tf.summary.histogram('post_bias', conv))
     return conv
 
+
 @default_name("fc")
 def fc_layer(input_tensor, dim_out, dim_in=None, with_bias=True, name=None):
   '''fc_layer returns a full connected layer

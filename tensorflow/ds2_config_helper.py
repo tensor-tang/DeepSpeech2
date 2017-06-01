@@ -80,7 +80,11 @@ def parse_args():
   debug_parser.add_argument('--no_debug', dest='debug', action='store_false',
     help='run in no debug mode and do not logging debug')
   parser.set_defaults(debug=True if CONF.DEBUG else False)
-  
+  parser.add_argument(
+    '--profil_iter',
+    type=int,
+    default=CONF.PROFIL_ITER,
+    help='save profiling data(timeline) at one iteration')
   parser.add_argument(
     '--data_format',
     type=str,

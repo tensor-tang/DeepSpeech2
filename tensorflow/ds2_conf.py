@@ -36,7 +36,7 @@ DEBUG = False
 '''
 network configuration
 '''
-DATA_FORMAT = "NHWC"  #"NCHW"
+DATA_FORMAT = 'nhwc'  # or 'nchw'
 
 # batch size
 BATCH_SIZE = 32
@@ -49,6 +49,9 @@ MAX_ITER = 1000
 
 # every 15 iteration test accuracy
 TEST_INTERVAL = 15
+
+# save profiling data at one iteration
+PROFIL_ITER = 30
 
 # every 10 iteration print the loss
 LOSS_ITER = 10
