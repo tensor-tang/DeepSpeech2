@@ -61,7 +61,8 @@ def train_loop():
                                   values = input_label_value,
                                   dense_shape = input_label_shape)
 
-  with tf.name_scope('ds2'):
+  #with tf.name_scope('ds2'):
+  with tf.variable_scope('ds2'):
     loss_op = ds2.get_loss(input_data, input_label, input_utt_lens, ARGS.data_format)
 
   with tf.name_scope('train'):
@@ -108,7 +109,7 @@ def train_loop():
         save_tfprof(ARGS.log_dir, sess.graph, run_metadata)
         
       if i % ARGS.loss_iter_interval == 0:
-        format_str = 'iter %d, training loss = %.2f (%.3f sec/batch)'
+        format_str = 'iter %d, training loss = %.2f (%.3f sec/iter)'
         log_content = (i, train_loss, duration)
         if ARGS.debug:
           s = time.time()
@@ -117,7 +118,7 @@ def train_loop():
           summary_writer.add_run_metadata(run_metadata, 'iter%03d' % i)
           summary_writer.add_summary(summary, i)
           d = time.time() - s
-          format_str += ', summary %.3g sec'
+          format_str += ', summary %.3g sec/iter'
           log_content += (d,)
         logger.info(format_str % log_content)
 

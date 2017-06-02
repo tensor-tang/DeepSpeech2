@@ -48,20 +48,21 @@ CONVS = list()
 CONVS.append(ConvParam(1,  32, 5, 20, 2, 2))
 CONVS.append(ConvParam(32, 32, 5, 10, 1, 2)) 
 
-def _variable_on_cpu(name, shape, initializer = None, use_fp16 = False):
+def _variable_on_cpu(name, shape, initializer=None, use_fp16=False):
   """Helper to create a Variable stored on cpu memory.
-
   Args:
     name: name of the variable
     shape: list of ints
-    initializer: initializer for Variable
-
+    initializer: initializer for Variable. Such as:
+      tf.constant_initializer(-0.05),
+      tf.zeros_initializer()
+      tf.ones_initializer()
   Returns:
     Variable Tensor
   """
   with tf.device('/cpu'):
-    dtype = tf.float32
-    var = tf.get_variable(name, shape, dtype = dtype, initializer = initializer)
+    dtype = tf.float16 if use_fp16 else tf.float32
+    var = tf.get_variable(name, shape, dtype=dtype, initializer=initializer)
   return var
 
 def weight_variable(name, shape):
@@ -138,6 +139,48 @@ def conv_layer(input_tensor,
     return conv
 
 
+@default_name("bn")
+def bn_layer(input_tensor,
+                  is_training=True,
+                  data_format='NHWC',
+                  eps=1e-5,
+                  name=None):
+  """batch normalization layer
+  spatial or sequential
+  currently only work on NHWC
+  """
+
+  input_shape = input_tensor.get_shape()
+  #with tf.name_scope(name):
+  with tf.variable_scope(name, reuse = False):
+    axis = list(range(len(input_shape) - 1))
+    if data_format == 'NCHW':
+      shape = input_shape[1]
+    else:
+      shape = input_shape[-1]
+
+    shift = _variable_on_cpu('shift', shape, initializer=tf.zeros_initializer())
+    scale = _variable_on_cpu('scale', shape, initializer=tf.ones_initializer())
+
+    bn, _, _ = tf.nn.fused_batch_norm(
+        input_tensor, scale, shift, mean=None, variance=None, epsilon=eps,
+        data_format=data_format, is_training=is_training, name=name)
+    bn.set_shape(input_shape)
+    return bn
+
+
+@default_name("crelu")
+def relu_layer(x, capping=None, name=None):
+  """ReLU layer, clipped if set capping
+  y = min(max(0, x), capping)
+  """
+  with tf.name_scope(name):
+    y = tf.nn.relu(x)
+    if capping is not None:
+      y = tf.minimum(y, capping)
+    return y
+
+
 @default_name("fc")
 def fc_layer(input_tensor, dim_out, dim_in=None, with_bias=True, name=None):
   '''fc_layer returns a full connected layer
@@ -173,24 +216,29 @@ def _nchw(input_data):
   # to shape: [bs, 1, 161, utt]
   feat = tf.expand_dims(trans, 1)
 
+  data_format = 'NCHW'
   for i in xrange(len(CONVS)):
-    feat = conv_layer(feat,
-                      CONVS[i].input_channels,
-                      CONVS[i].num_kernels,
-                      [CONVS[i].kernel_height, CONVS[i].kernel_width],
-                      [CONVS[i].stride_height,CONVS[i].stride_width],
-                      data_format='NCHW')
+    with tf.variable_scope(('CBR_%d' % i), reuse = False):
+      feat = conv_layer(feat,
+                        CONVS[i].input_channels,
+                        CONVS[i].num_kernels,
+                        [CONVS[i].kernel_height, CONVS[i].kernel_width],
+                        [CONVS[i].stride_height, CONVS[i].stride_width],
+                        data_format=data_format)
+      feat = bn_layer(feat, data_format=data_format)
+      feat = relu_layer(feat, capping=20)
 
-  # feat shape [bs, 32, 75, seq]
-  feat_shape = tf.shape(feat)
-  dim = feat_shape[1] * feat_shape[2]
-  seq = feat_shape[3]
+  with tf.name_scope('reshape_trans'):
+    # feat shape [bs, 32, 75, seq]
+    feat_shape = tf.shape(feat)
+    dim = feat_shape[1] * feat_shape[2]
+    seq = feat_shape[3]
 
-  # reshape to [bs, dim , seq]
-  feat = tf.reshape(feat, [-1, dim, seq])
+    # reshape to [bs, dim , seq]
+    feat = tf.reshape(feat, [-1, dim, seq])
 
-  # from [bs, dim , seq] to [seq, bs, dim]
-  out = tf.transpose(feat, [2, 0, 1])
+    # from [bs, dim , seq] to [seq, bs, dim]
+    out = tf.transpose(feat, [2, 0, 1])
   return out
   
 def _nhwc(input_data):
@@ -200,22 +248,27 @@ def _nhwc(input_data):
   # to shape: [bs, utt, 161, 1]
   feat = tf.expand_dims(input_data, -1)
 
+  data_format = 'NHWC'
   for i in xrange(len(CONVS)):
-    feat = conv_layer(feat,
-                      CONVS[i].input_channels,
-                      CONVS[i].num_kernels,
-                      [CONVS[i].kernel_width, CONVS[i].kernel_height],
-                      [CONVS[i].stride_width,CONVS[i].stride_height],
-                      data_format='NHWC')
+    with tf.variable_scope(('CBR_%d' % i), reuse = False):
+      feat = conv_layer(feat,
+                        CONVS[i].input_channels,
+                        CONVS[i].num_kernels,
+                        [CONVS[i].kernel_width, CONVS[i].kernel_height],
+                        [CONVS[i].stride_width, CONVS[i].stride_height],
+                        data_format=data_format)
+      feat = bn_layer(feat, data_format=data_format)
+      feat = relu_layer(feat, capping=20)
 
-  # transpose from [bs, seq, 75, 32] to [seq, bs, 32, 75]
-  feat = tf.transpose(feat, [1, 0, 3, 2])
-  feat_shape = tf.shape(feat)
+  with tf.name_scope('trans_reshape'):
+    # transpose from [bs, seq, 75, 32] to [seq, bs, 32, 75]
+    feat = tf.transpose(feat, [1, 0, 3, 2])
+    feat_shape = tf.shape(feat)
 
-  # reshape to [seq, bs, dim]
-  seq = feat_shape[0]
-  dim = feat_shape[2] * feat_shape[3]
-  out = tf.reshape(feat, [seq, -1, dim])
+    # reshape to [seq, bs, dim]
+    seq = feat_shape[0]
+    dim = feat_shape[2] * feat_shape[3]
+    out = tf.reshape(feat, [seq, -1, dim])
   return out
 
 
