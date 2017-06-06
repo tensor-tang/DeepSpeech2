@@ -88,7 +88,7 @@ def variable_summaries(var):
     tf.summary.histogram('histogram', var)
     
 @default_name("conv")
-def conv_layer(input_tensor,
+def conv_layer(x,
                 input_channels,
                 num_kernels,
                 kernel_size,
@@ -127,8 +127,8 @@ def conv_layer(input_tensor,
   with tf.name_scope(name):
     wgt = weight_variable('param_weight', [kh, kw, ic, oc])
     DEBUG(variable_summaries(wgt))
-    DEBUG(tf.summary.histogram('pre_' + name, input_tensor))
-    conv = tf.nn.conv2d(input_tensor, wgt, stride, padding,
+    DEBUG(tf.summary.histogram('pre_' + name, x))
+    conv = tf.nn.conv2d(x, wgt, stride, padding,
                         data_format=data_format, name=name)
     DEBUG(tf.summary.histogram('post_' + name, conv))
     if with_bias:
@@ -140,7 +140,7 @@ def conv_layer(input_tensor,
 
 
 @default_name("bn")
-def bn_layer(input_tensor,
+def bn_layer(x,
                   is_training=True,
                   data_format='NHWC',
                   eps=1e-5,
@@ -150,7 +150,7 @@ def bn_layer(input_tensor,
   currently only work on NHWC
   """
 
-  input_shape = input_tensor.get_shape()
+  input_shape = x.get_shape()
   #with tf.name_scope(name):
   with tf.variable_scope(name, reuse = False):
     axis = list(range(len(input_shape) - 1))
@@ -163,7 +163,7 @@ def bn_layer(input_tensor,
     scale = _variable_on_cpu('scale', shape, initializer=tf.ones_initializer())
 
     bn, _, _ = tf.nn.fused_batch_norm(
-        input_tensor, scale, shift, mean=None, variance=None, epsilon=eps,
+        x, scale, shift, mean=None, variance=None, epsilon=eps,
         data_format=data_format, is_training=is_training, name=name)
     bn.set_shape(input_shape)
     return bn
@@ -182,7 +182,7 @@ def relu_layer(x, capping=None, name=None):
 
 
 @default_name("fc")
-def fc_layer(input_tensor, dim_out, dim_in=None, with_bias=True, name=None):
+def fc_layer(x, dim_out, dim_in=None, with_bias=True, name=None):
   '''fc_layer returns a full connected layer
      Wx + b
      param:
@@ -193,8 +193,8 @@ def fc_layer(input_tensor, dim_out, dim_in=None, with_bias=True, name=None):
     dim_in = dim_out
 
   with tf.name_scope(name):
-    DEBUG(tf.summary.histogram('pre_' + name, input_tensor))
-    x = tf.reshape(input_tensor, [-1, dim_in])
+    DEBUG(tf.summary.histogram('pre_' + name, x))
+    x = tf.reshape(x, [-1, dim_in])
     wgt = weight_variable('weight', [dim_in, dim_out])
     DEBUG(variable_summaries(wgt))
     fc_ = tf.matmul(x, wgt)
@@ -269,7 +269,7 @@ def _nhwc(input_data):
     seq = feat_shape[0]
     dim = feat_shape[2] * feat_shape[3]
     out = tf.reshape(feat, [seq, -1, dim])
-  return out
+    return out
 
 
 def get_seq_lens(input_utt_lens):
@@ -284,23 +284,131 @@ def get_seq_lens(input_utt_lens):
   return seq_lens
 
 
-def cbr_combine(input_tensor, data_format):
+def cbr_combine(x, data_format):
   '''combine of conv, batch_norm and cliiped relu
   return feature shape as [seq, bs, dim]
   '''
   # TODO: batchnorm relu
   if data_format == 'NCHW':
-    feat = _nchw(input_tensor)
+    feat = _nchw(x)
   else:
-    feat = _nhwc(input_tensor)
+    feat = _nhwc(x)
   return feat
 
-def rnn_layers(input_tensor, layer_nums=7):
+
+@default_name("seq_bn")
+def seq_batch_norm(x, eps=1e-5, name = None, is_train = True):
+  '''sequence batch normalization
+  input is [seq, bs, dim]
+  '''
+  assert len(x.get_shape()) == 3, 'input should be 3-D'
+  with tf.variable_scope(name, reuse=True):
+    inputs_shape = tf.shape(x) #x.get_shape()
+    
+    seq_len = inputs_shape[0]
+    dim = inputs_shape[2]
+    # split 
+    seq_bn = tf.split(x, num_or_size_splits=seq_len, axis=0)
+    print('seq len %d' % len(seq_bn))
+    shift = _variable_on_cpu('shift', dim, initializer = tf.zeros_initializer())
+    scale = _variable_on_cpu('scale', dim, initializer = tf.ones_initializer())
+    batch_mean, batch_var = tf.nn.moments(x, [0], name = 'moments')
+    ema = tf.train.ExponentialMovingAverage(decay = 0.5)
+    def mean_var_with_update():
+      ema_apply_op = ema.apply([batch_mean, batch_var])
+      with tf.control_dependencies([ema_apply_op]):
+        return tf.identity(batch_mean), tf.identity(batch_var)
+    if is_train:
+      mean, var = mean_var_with_update()
+    else:
+      mean, var = lambda : (ema.average(batch_mean), ema.average(batch_var))
+    for i in xrange(len(seq_bn)):
+      bn = tf.nn.batch_normalization(seq_bn[i], mean, var, shift, scale, eps)
+  return bn
+
+
+
+INFERENCE_DTYPE = None
+
+
+
+@default_name("rnn_op")
+def rnn_op(x, dim_out, dim_in=None, use_bi_dir=True, name=None):
+  '''
+  input is [seq, bs, dim_in]
+  rnn_op: fc (without bias) -> seq bn -> rnn (skip_input)
+  output is [seq, bs, dim_out]
+  '''
+  dtype = INFERENCE_DTYPE
+  assert len(x.get_shape()) == 3, 'input should be 3-D'
+  if dim_in is None:
+    dim_in = dim_out
+
+  input_shape = tf.shape(x)
+  x = fc_layer(x, dim_out=dim_out, dim_in=dim_in, with_bias=False)
+  x = tf.reshape(x, [input_shape[0], input_shape[1], dim_out])
+  print('out shape of bs', x.get_shape())
+  #x = seq_batch_norm(x)
+#  rnn_input = seq_batch_norm(x)
+  '''
+  rnn_cell = RNNCellSkipInput(dim_out, use_fp16 = use_fp16)
+  if use_bi_dir:
+    outputs, _ = tf.nn.bidirectional_dynamic_rnn(
+                            rnn_cell, rnn_cell, rnn_input,
+                            sequence_length=rnn_seq_lens, dtype = dtype,
+                            time_major = True, scope = scope.name,
+                            swap_memory = False)
+    outputs_fw, outputs_bw = outputs
+    rnn_outputs = tf.add(outputs_fw, outputs_bw)
+  else:
+    rnn_outputs, _ = tf.nn.dynamic_rnn(
+                            rnn_cell, rnn_input,
+                            sequence_length = rnn_seq_lens,
+                            dtype = dtype, time_major = True,
+                            scope = scope.name,
+                            swap_memory = False)
+  '''
+
+  return x
+
+def rnn_layers(x, layer_nums=7):
   '''return feature shape as [seq, bs, dim]
   '''
-  # TODO:...
-  return input_tensor
+  assert layer_nums > 1, 'at least 1 rnn layer'
+  assert len(x.get_shape()) == 3, 'input should be 3-D'
+  dim_in = 32 * 75
+  dim_out = 1760
+  with tf.variable_scope('BRNN_0') as scope:
+    x = rnn_op(x, dim_out=dim_out, dim_in=dim_in, name=scope.name)
+  for i in range(1, layer_nums):  # range: [1, layer_nums)
+    with tf.variable_scope('BRNN_%d' % i) as scope:
+      x = rnn_op(x, dim_out=dim_out, name=scope.name)
+  #x = tf.Print(x, [x.get_shape()], "out shape of rnn", 1760)
+  print('out shape of rnn', x.get_shape())
+  return x
 
+
+
+def inference(input_data, data_format, dtype=tf.float32):
+  assert data_format in ["NCHW", "NHWC"], "only support nchw or nhwc yet"
+
+  INFERENCE_DTYPE = dtype # tf.float16, tf.float32
+  feat = cbr_combine(input_data, data_format)
+
+  rnn_out = rnn_layers(feat)
+  # shape from rnn output is 3-D: [seq, bs, dim]
+  rnn_shape = tf.shape(rnn_out)
+  seq = rnn_shape[0]
+  bs  = rnn_shape[1]
+
+  # ctc needs 1 more class for blank
+  num_classes = Dataset.char_num + 1
+  fc_out = fc_layer(rnn_out, dim_out=num_classes, dim_in=1760) # dim# todo: magic number
+
+  # keep 3-D shape since ctc needs
+  logits = tf.reshape(fc_out, [seq, bs, num_classes])
+
+  return logits
 
 def get_loss(input_data, input_label, input_utt_lens, data_format):
   '''get loss
@@ -313,22 +421,8 @@ def get_loss(input_data, input_label, input_utt_lens, data_format):
   
   return the tf loss operation
   '''
-  if data_format not in ["NCHW", "NHWC"]:
-    logger.fatal("only support nchw or nhwc yet")
-    exit(0)
-
-  feat = cbr_combine(input_data, data_format)
-
-  rnn_out = rnn_layers(feat)
-
-  # ctc needs 1 more class for blank
-  num_classes = Dataset.char_num + 1
-  fc_out = fc_layer(rnn_out, num_classes, dim_in=32 * 75) # todo: magic number
-
-  # shape from rnn output is 3-D: [seq, bs, dim], keep 3-D since ctc needs
-  rnn_shape = tf.shape(rnn_out)
-  seq = rnn_shape[0]
-  logits = tf.reshape(fc_out, [seq, -1, num_classes])
+  
+  logits = inference(input_data, data_format)
 
   # actually this seq_lens is equal [seq, seq, ..., seq] of len batch_size
   # since ctc loss need them as specific number so only can cal from input 
