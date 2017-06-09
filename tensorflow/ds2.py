@@ -297,7 +297,7 @@ def cbr_combine(x, data_format):
 
 
 @default_name("seq_bn")
-def seq_batch_norm(x, eps=1e-5, name = None, is_train = True):
+def seq_batch_norm_old(x, eps=1e-5, name = None, is_train = True):
   '''sequence batch normalization
   input is [seq, bs, dim]
   '''
@@ -328,12 +328,72 @@ def seq_batch_norm(x, eps=1e-5, name = None, is_train = True):
 
 
 
-INFERENCE_DTYPE = None
+INFERENCE_DTYPE = tf.float32 # this global not work, need check
 
+
+class SeqBNCell(tf.contrib.rnn.BasicRNNCell):
+  """ This is cell is only used to seq batch norm,
+  not directly a rnn cell, just use the rnn shell.
+  """
+
+  @default_name("seqBNCell")
+  def __init__(self, num_units, activation = tf.nn.relu6, is_train=True, eps=1e-5, use_fp16=False, name=None):
+    self._num_units = num_units
+    self.use_fp16 = use_fp16
+    self.eps = eps
+    self.name = name
+    self.is_train = is_train
+    logger.debug(self.name)
+
+  def __call__(self, inputs, state):
+    """Most basic RNN:
+    input is [bs, dim]
+    output is [bs, dim]
+    
+    """
+    logger.debug(self.name)
+    with tf.variable_scope(self.name) as scope:
+      dim = inputs.get_shape()[1]
+      shift = _variable_on_cpu('shift', dim, initializer=tf.zeros_initializer())
+      scale = _variable_on_cpu('scale', dim, initializer=tf.ones_initializer())
+      logger.debug(shift.name)
+      batch_mean, batch_var = tf.nn.moments(inputs, [0], name = 'moments')
+      ema = tf.train.ExponentialMovingAverage(decay = 0.5)
+      if self.is_train:
+        ema_apply_op = ema.apply([batch_mean, batch_var])
+        with tf.control_dependencies([ema_apply_op]):
+          mean = tf.identity(batch_mean)
+          var =  tf.identity(batch_var)
+      else:
+        mean, var = lambda : (ema.average(batch_mean), ema.average(batch_var))
+      scope.reuse_variables()
+      bn = tf.nn.batch_normalization(inputs, mean, var, shift, scale, self.eps)
+      return bn, bn
+
+@default_name("seq_bn")
+def seq_batch_norm(x, dim, seq_lens, eps=1e-5, name = None, is_train = True):
+  '''sequence batch normalization
+  input is [seq, bs, dim]
+  '''
+  assert len(x.get_shape()) == 3, 'input should be 3-D'
+  dtype = INFERENCE_DTYPE
+  logger.debug(dtype)
+  with tf.variable_scope(name) as scope:
+    bncell = SeqBNCell(num_units=dim)
+    #cell = tf.contrib.rnn.CompiledWrapper(bncell)
+    #cell = tf.contrib.rnn.RNNCell(bncell)
+    cell = tf.contrib.rnn.MultiRNNCell([bncell])
+    seqbn_output, _ = tf.nn.dynamic_rnn(
+                        cell, x,
+                        sequence_length = seq_lens,
+                        dtype = dtype,
+                        time_major = True,  # input is [seq, bs, dim]
+                        swap_memory = True)
+    return seqbn_output
 
 
 @default_name("rnn_op")
-def rnn_op(x, dim_out, dim_in=None, use_bi_dir=True, name=None):
+def rnn_op(x, seq_lens, dim_out, dim_in=None, use_bi_dir=True, name=None):
   '''
   input is [seq, bs, dim_in]
   rnn_op: fc (without bias) -> seq bn -> rnn (skip_input)
@@ -347,8 +407,8 @@ def rnn_op(x, dim_out, dim_in=None, use_bi_dir=True, name=None):
   input_shape = tf.shape(x)
   x = fc_layer(x, dim_out=dim_out, dim_in=dim_in, with_bias=False)
   x = tf.reshape(x, [input_shape[0], input_shape[1], dim_out])
-  print('out shape of bs', x.get_shape())
-  #x = seq_batch_norm(x)
+  #print('out shape of fc', x.get_shape())
+  x = seq_batch_norm(x, dim=dim_out, seq_lens=seq_lens)
 #  rnn_input = seq_batch_norm(x)
   '''
   rnn_cell = RNNCellSkipInput(dim_out, use_fp16 = use_fp16)
@@ -371,7 +431,12 @@ def rnn_op(x, dim_out, dim_in=None, use_bi_dir=True, name=None):
 
   return x
 
-def rnn_layers(x, layer_nums=7):
+
+
+
+
+
+def rnn_layers(x, seq_lens, layer_nums=7):
   '''return feature shape as [seq, bs, dim]
   '''
   assert layer_nums > 1, 'at least 1 rnn layer'
@@ -379,23 +444,29 @@ def rnn_layers(x, layer_nums=7):
   dim_in = 32 * 75
   dim_out = 1760
   with tf.variable_scope('BRNN_0') as scope:
-    x = rnn_op(x, dim_out=dim_out, dim_in=dim_in, name=scope.name)
+    x = rnn_op(x, seq_lens=seq_lens, dim_out=dim_out, dim_in=dim_in, name=scope.name)
   for i in range(1, layer_nums):  # range: [1, layer_nums)
     with tf.variable_scope('BRNN_%d' % i) as scope:
-      x = rnn_op(x, dim_out=dim_out, name=scope.name)
+      x = rnn_op(x, seq_lens=seq_lens, dim_out=dim_out, name=scope.name)
   #x = tf.Print(x, [x.get_shape()], "out shape of rnn", 1760)
   print('out shape of rnn', x.get_shape())
   return x
 
 
 
-def inference(input_data, data_format, dtype=tf.float32):
+def inference(input_data, data_format, input_utt_lens, dtype=tf.float32):
+  '''inference return logits, seq_lens
+  '''
   assert data_format in ["NCHW", "NHWC"], "only support nchw or nhwc yet"
 
   INFERENCE_DTYPE = dtype # tf.float16, tf.float32
   feat = cbr_combine(input_data, data_format)
 
-  rnn_out = rnn_layers(feat)
+  # actually this seq_lens is equal [seq, seq, ..., seq] of len batch_size
+  # since ctc loss need them as specific number so only can cal from input 
+  seq_lens = get_seq_lens(input_utt_lens)
+
+  rnn_out = rnn_layers(feat, seq_lens)
   # shape from rnn output is 3-D: [seq, bs, dim]
   rnn_shape = tf.shape(rnn_out)
   seq = rnn_shape[0]
@@ -408,7 +479,7 @@ def inference(input_data, data_format, dtype=tf.float32):
   # keep 3-D shape since ctc needs
   logits = tf.reshape(fc_out, [seq, bs, num_classes])
 
-  return logits
+  return logits, seq_lens
 
 def get_loss(input_data, input_label, input_utt_lens, data_format):
   '''get loss
@@ -422,11 +493,10 @@ def get_loss(input_data, input_label, input_utt_lens, data_format):
   return the tf loss operation
   '''
   
-  logits = inference(input_data, data_format)
+  logits, seq_lens = inference(input_data, data_format, input_utt_lens)
 
-  # actually this seq_lens is equal [seq, seq, ..., seq] of len batch_size
-  # since ctc loss need them as specific number so only can cal from input 
-  seq_lens = get_seq_lens(input_utt_lens)
+  # Reuse variables
+  #tf.get_variable_scope().reuse_variables()
   
   ctc_loss = tf.nn.ctc_loss(labels=input_label,
                         inputs = tf.cast(logits, tf.float32),
