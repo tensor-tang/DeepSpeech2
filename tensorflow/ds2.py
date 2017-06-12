@@ -310,8 +310,8 @@ def seq_batch_norm_old(x, eps=1e-5, name = None, is_train = True):
     # split 
     seq_bn = tf.split(x, num_or_size_splits=seq_len, axis=0)
     print('seq len %d' % len(seq_bn))
-    shift = _variable_on_cpu('shift', dim, initializer = tf.zeros_initializer())
-    scale = _variable_on_cpu('scale', dim, initializer = tf.ones_initializer())
+    shift = _variable_on_cpu('shift', dim, initializer = tf.zeros_initializer(),use_fp16 = self.use_fp16)
+    scale = _variable_on_cpu('scale', dim, initializer = tf.ones_initializer(),use_fp16 = self.use_fp16)
     batch_mean, batch_var = tf.nn.moments(x, [0], name = 'moments')
     ema = tf.train.ExponentialMovingAverage(decay = 0.5)
     def mean_var_with_update():
@@ -329,6 +329,42 @@ def seq_batch_norm_old(x, eps=1e-5, name = None, is_train = True):
 
 
 INFERENCE_DTYPE = tf.float32 # this global not work, need check
+
+class RnnCell(tf.contrib.rnn.BasicRNNCell):
+  """ This cell is used for basical rnn with skip input mode
+  output = new_state = activation(input + U * state + B).
+  U: num_units * num_units
+  """
+
+  @default_name("RnnCell")
+  def __init__(self, num_units, activation = tf.nn.relu6, skip_input = True, use_fp16=False, name=None):
+    self._num_units = num_units
+    self.use_fp16 = use_fp16
+    self.name = name
+    self.skip_input = skip_input
+    logger.debug(self.name)
+
+  def __call__(self, inputs, state):
+    """Most basic RNN:
+    input shape is [bs, dim]
+    state shape is [bs, dim]
+    output shaep is [bs, dim]
+    """
+    logger.debug(self.name)
+    assert self.skip_input, 'only support skip input mode yet'
+    with tf.variable_scope(self.name):
+      #print "rnn cell input size: ", inputs.get_shape().as_list()
+      #print "rnn cell state size: ", state.get_shape().as_list()
+      u_ = _variable_on_cpu('U', [self._num_units, self._num_units],
+                            initializer = tf.zeros_initializer(),
+                            use_fp16 = self.use_fp16)
+      resu = tf.matmul(state, u_)
+      b_ = _variable_on_cpu('B', [self._num_units],
+                           tf.constant_initializer(0),
+                           use_fp16 = self.use_fp16)
+      output = relu_layer(resu + b_, capping = 20)
+    return output, output
+
 
 
 class SeqBNCell(tf.contrib.rnn.BasicRNNCell):
@@ -393,7 +429,7 @@ def seq_batch_norm(x, dim, seq_lens, eps=1e-5, name = None, is_train = True):
 
 
 @default_name("rnn_op")
-def rnn_op(x, seq_lens, dim_out, dim_in=None, use_bi_dir=True, name=None):
+def rnn_op(x, seq_lens, dim_out, dim_in=None, use_bi_dir=True, use_fp16=False,name=None):
   '''
   input is [seq, bs, dim_in]
   rnn_op: fc (without bias) -> seq bn -> rnn (skip_input)
@@ -408,28 +444,31 @@ def rnn_op(x, seq_lens, dim_out, dim_in=None, use_bi_dir=True, name=None):
   x = fc_layer(x, dim_out=dim_out, dim_in=dim_in, with_bias=False)
   x = tf.reshape(x, [input_shape[0], input_shape[1], dim_out])
   #print('out shape of fc', x.get_shape())
-  x = seq_batch_norm(x, dim=dim_out, seq_lens=seq_lens)
-#  rnn_input = seq_batch_norm(x)
-  '''
-  rnn_cell = RNNCellSkipInput(dim_out, use_fp16 = use_fp16)
+  rnn_input= seq_batch_norm(x, dim=dim_out, seq_lens=seq_lens)
+
+
+  rnn_cell = RnnCell(dim_out, skip_input=True, use_fp16 = use_fp16)
   if use_bi_dir:
     outputs, _ = tf.nn.bidirectional_dynamic_rnn(
                             rnn_cell, rnn_cell, rnn_input,
-                            sequence_length=rnn_seq_lens, dtype = dtype,
-                            time_major = True, scope = scope.name,
-                            swap_memory = False)
+                            sequence_length=seq_lens,
+                            dtype = dtype,
+                            time_major = True,
+                            scope = name,
+                            swap_memory = True)
     outputs_fw, outputs_bw = outputs
     rnn_outputs = tf.add(outputs_fw, outputs_bw)
   else:
     rnn_outputs, _ = tf.nn.dynamic_rnn(
                             rnn_cell, rnn_input,
-                            sequence_length = rnn_seq_lens,
-                            dtype = dtype, time_major = True,
-                            scope = scope.name,
-                            swap_memory = False)
-  '''
+                            sequence_length = seq_lens,
+                            dtype = dtype,
+                            time_major = True,
+                            scope = name,
+                            swap_memory = True)
+  
 
-  return x
+  return rnn_outputs
 
 
 

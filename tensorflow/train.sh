@@ -3,6 +3,7 @@ clear
 echo "-----------------------------------"
 cur_dir=$(cd "$(dirname $0)";pwd -P)
 log_dir="${cur_dir}/logs"
+log_file="${log_dir}/log.log"
 echo "log dir: " ${log_dir}
 
 python ds2_trainer.py \
@@ -15,7 +16,8 @@ python ds2_trainer.py \
     --log_dir=$log_dir \
     --profil_iter=30 \
     --checkpoint_iter=1000 \
-    --debug
+    --debug \
+    2>&1 | tee -a $log_file
 
 #tensorboard --logdir=$log_dir
 
